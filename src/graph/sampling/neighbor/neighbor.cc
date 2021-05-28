@@ -17,22 +17,13 @@ using namespace dgl::aten;
 namespace dgl {
 namespace sampling {
 
-HeteroSubgraph SampleNeighbors(
+HeteroSubgraph SampleGraphNeighbors(
     const HeteroGraphPtr hg,
     const std::vector<IdArray>& nodes,
     const std::vector<int64_t>& fanouts,
     EdgeDir dir,
     const std::vector<FloatArray>& prob,
     bool replace) {
-
-  // sanity check
-  CHECK_EQ(nodes.size(), hg->NumVertexTypes())
-    << "Number of node ID tensors must match the number of node types.";
-  CHECK_EQ(fanouts.size(), hg->NumEdgeTypes())
-    << "Number of fanout values must match the number of edge types.";
-  CHECK_EQ(prob.size(), hg->NumEdgeTypes())
-    << "Number of probability tensors must match the number of edge types.";
-
   std::vector<HeteroGraphPtr> subrels(hg->NumEdgeTypes());
   std::vector<IdArray> induced_edges(hg->NumEdgeTypes());
   for (dgl_type_t etype = 0; etype < hg->NumEdgeTypes(); ++etype) {
@@ -102,6 +93,41 @@ HeteroSubgraph SampleNeighbors(
   ret.induced_vertices.resize(hg->NumVertexTypes());
   ret.induced_edges = std::move(induced_edges);
   return ret;
+}
+
+HeteroSubgraph SampleNeighbors(
+    const HeteroGraphPtr hg,
+    const std::vector<IdArray>& nodes,
+    const std::vector<int64_t>& fanouts,
+    EdgeDir dir,
+    const std::vector<FloatArray>& prob,
+    const std::vector<IdArray>& exclude_edges,
+    bool replace) {
+
+  // sanity check
+  CHECK_EQ(nodes.size(), hg->NumVertexTypes())
+    << "Number of node ID tensors must match the number of node types.";
+  CHECK_EQ(fanouts.size(), hg->NumEdgeTypes())
+    << "Number of fanout values must match the number of edge types.";
+  CHECK_EQ(prob.size(), hg->NumEdgeTypes())
+    << "Number of probability tensors must match the number of edge types.";
+
+  if (!exclude_edges.empty()) {
+    std::vector<IdArray> remain_edges(hg->NumEdgeTypes());
+    for (dgl_type_t etype = 0; etype < hg->NumEdgeTypes(); ++etype) {
+     EdgeArray edges = hg->Edges(etype);
+     ATEN_ID_TYPE_SWITCH(hg->DataType(), IdType, {
+        remain_edges[etype] =
+              edges.excludeCertainEids<IdType>(exclude_edges[etype]);
+     });
+    }
+    std::shared_ptr<HeteroSubgraph> subg(
+          new HeteroSubgraph(hg->EdgeSubgraph(remain_edges, true)));
+
+    return SampleGraphNeighbors(HeteroGraphRef(subg->graph).sptr(),
+                         nodes, fanouts, dir, prob, replace);
+  }
+  return SampleGraphNeighbors(hg, nodes, fanouts, dir, prob, replace);
 }
 
 HeteroSubgraph SampleNeighborsTopk(
@@ -277,7 +303,8 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
     const auto& fanouts = fanouts_array.ToVector<int64_t>();
     const std::string dir_str = args[3];
     const auto& prob = ListValueToVector<FloatArray>(args[4]);
-    const bool replace = args[5];
+    const auto& exclude_edges = ListValueToVector<IdArray>(args[5]);
+    const bool replace = args[6];
 
     CHECK(dir_str == "in" || dir_str == "out")
       << "Invalid edge direction. Must be \"in\" or \"out\".";
@@ -285,7 +312,7 @@ DGL_REGISTER_GLOBAL("sampling.neighbor._CAPI_DGLSampleNeighbors")
 
     std::shared_ptr<HeteroSubgraph> subg(new HeteroSubgraph);
     *subg = sampling::SampleNeighbors(
-        hg.sptr(), nodes, fanouts, dir, prob, replace);
+        hg.sptr(), nodes, fanouts, dir, prob, exclude_edges, replace);
 
     *rv = HeteroSubgraphRef(subg);
   });

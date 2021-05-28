@@ -84,6 +84,22 @@ class DGLIdIters32 {
 typedef struct {
   /* \brief the two endpoints and the id of the edge */
   IdArray src, dst, id;
+
+  /* \brief return difference of id and exclude_ids ids sets*/
+  template <class T>
+  IdArray excludeCertainEids(const IdArray & exclude_ids) {
+    auto exclude_ids_v = exclude_ids.ToVector<T>();
+    auto id_begin = id.Ptr<T>();
+    auto id_end = id_begin + id.GetSize()/sizeof(T);
+    auto eiv_begin = exclude_ids_v.begin();
+    auto eiv_end = exclude_ids_v.end();
+    std::sort(eiv_begin, eiv_end);
+    std::vector<T> v(id_end-id_begin);
+    auto it = std::set_difference(id_begin, id_end,
+                                  eiv_begin, eiv_end, v.begin());
+    v.resize(it-v.begin());
+    return IdArray::FromVector(v);
+  }
 } EdgeArray;
 
 // forward declaration
